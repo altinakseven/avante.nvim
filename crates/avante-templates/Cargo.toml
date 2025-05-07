@@ -12,6 +12,7 @@ version.workspace = true
 mlua = { workspace = true }
 minijinja = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+jni = "0.21.1"
 
 [lints]
 workspace = true

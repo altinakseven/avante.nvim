@@ -1,3 +1,4 @@
+use ureq;
 use hf_hub::{api::sync::ApiBuilder, Repo, RepoType};
 use mlua::prelude::*;
 use regex::Regex;

@@ -14,11 +14,15 @@ workspace = true
 [dependencies]
 dirs = "5.0.1"
 regex = "1.11.1"
-hf-hub = { git = "https://github.com/yetone/hf-hub", branch='main', features = ["default", "ureq"] }
-ureq = { version = "2.10.1", features = ["json", "socks-proxy"] }
+hf-hub = { path='../hf-hub', features = ["default", "ureq"] }
+ureq = { path = "../ureq", features = [
+  "json",
+  "socks-proxy",
+] }
 mlua = { workspace = true }
 tiktoken-rs = { workspace = true }
 tokenizers = { workspace = true }
+jni = "0.21.1"
 
 [features]
 lua51 = ["mlua/lua51"]
