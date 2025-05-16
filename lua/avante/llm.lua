@@ -11,6 +11,7 @@ local Providers = require("avante.providers")
 local LLMToolHelpers = require("avante.llm_tools.helpers")
 local LLMTools = require("avante.llm_tools")
 local HistoryMessage = require("avante.history_message")
+local ErrorHandler = require("avante.error_handler")
 
 ---@class avante.LLM
 local M = {}
@@ -677,8 +678,10 @@ end
 
 ---@param opts AvanteLLMStreamOptions
 function M._stream(opts)
-  -- Reset the cancellation flag at the start of a new request
-  if LLMToolHelpers then LLMToolHelpers.is_cancelled = false end
+  -- Wrap the entire function with our error handler
+  local wrapped_stream = ErrorHandler.wrap(function(opts)
+    -- Reset the cancellation flag at the start of a new request
+    if LLMToolHelpers then LLMToolHelpers.is_cancelled = false end
 
   local provider = opts.provider or Providers[Config.provider]
   opts.session_ctx = opts.session_ctx or {}
@@ -876,6 +879,10 @@ function M._stream(opts)
     handler_opts = handler_opts,
     on_response_headers = function(headers) resp_headers = headers end,
   })
+  end) -- Close the ErrorHandler.wrap function
+  
+  -- Call the wrapped function with the provided options
+  return wrapped_stream(opts)
 end
 
 local function _merge_response(first_response, second_response, opts)
@@ -913,7 +920,9 @@ local function _collector_add_response(collector, index, response, opts)
 end
 
 function M._dual_boost_stream(opts, Provider1, Provider2)
-  Utils.debug("Starting Dual Boost Stream")
+  -- Wrap with error handler
+  local wrapped_dual_boost = ErrorHandler.wrap(function(opts, Provider1, Provider2)
+    Utils.debug("Starting Dual Boost Stream")
 
   local collector = {
     count = 0,
@@ -964,18 +973,24 @@ function M._dual_boost_stream(opts, Provider1, Provider2)
     M._stream(opts2)
   end, function(err) return err end)
   if not success then Utils.error("Failed to start dual_boost streams: " .. tostring(err)) end
+  end) -- Close the ErrorHandler.wrap function
+  
+  -- Call the wrapped function with the provided options
+  return wrapped_dual_boost(opts, Provider1, Provider2)
 end
 
 ---@param opts AvanteLLMStreamOptions
 function M.stream(opts)
-  local is_completed = false
-  if opts.on_tool_log ~= nil then
-    local original_on_tool_log = opts.on_tool_log
-    opts.on_tool_log = vim.schedule_wrap(function(...)
-      if not original_on_tool_log then return end
-      return original_on_tool_log(...)
-    end)
-  end
+  -- Wrap the stream function with our error handler
+  local wrapped_stream = ErrorHandler.wrap(function(opts)
+    local is_completed = false
+    if opts.on_tool_log ~= nil then
+      local original_on_tool_log = opts.on_tool_log
+      opts.on_tool_log = vim.schedule_wrap(function(...)
+        if not original_on_tool_log then return end
+        return original_on_tool_log(...)
+      end)
+    end
   if opts.on_chunk ~= nil then
     local original_on_chunk = opts.on_chunk
     opts.on_chunk = vim.schedule_wrap(function(chunk)
@@ -1009,6 +1024,10 @@ function M.stream(opts)
   else
     M._stream(opts)
   end
+  end) -- Close the ErrorHandler.wrap function
+  
+  -- Call the wrapped function with the provided options
+  return wrapped_stream(opts)
 end
 
 function M.cancel_inflight_request()
