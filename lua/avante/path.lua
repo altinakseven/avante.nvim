@@ -86,18 +86,46 @@ end
 function History.get_latest_filename(bufnr, new)
   local history_dir = History.get_history_dir(bufnr)
   local filename
+  
+  -- First try to get the filename from metadata
   local metadata_filepath = History.get_metadata_filepath(bufnr)
   if metadata_filepath:exists() and not new then
-    local metadata_content = metadata_filepath:read()
-    local metadata = vim.json.decode(metadata_content)
-    filename = metadata.latest_filename
+    local ok, metadata_content = pcall(function() return metadata_filepath:read() end)
+    if ok and metadata_content then
+      local ok2, metadata = pcall(vim.json.decode, metadata_content)
+      if ok2 and metadata and metadata.latest_filename then
+        filename = metadata.latest_filename
+        Utils.debug("Found latest filename in metadata: " .. filename)
+      end
+    end
   end
+  
+  -- If we couldn't get the filename from metadata, try to find the latest file
   if not filename or filename == "" then
     local pattern = tostring(history_dir:joinpath("*.json"))
     local files = vim.fn.glob(pattern, true, true)
-    filename = #files .. ".json"
-    if #files > 0 and not new then filename = (#files - 1) .. ".json" end
+    
+    -- Filter out metadata.json
+    files = vim.tbl_filter(function(file)
+      return not file:match("metadata%.json$")
+    end, files)
+    
+    if #files > 0 and not new then
+      -- Sort files by modification time to find the most recent one
+      table.sort(files, function(a, b)
+        return vim.fn.getftime(a) > vim.fn.getftime(b)
+      end)
+      
+      -- Get the filename without the path
+      filename = vim.fn.fnamemodify(files[1], ":t")
+      Utils.debug("Found latest filename by modification time: " .. filename)
+    else
+      -- If no files exist or we're creating a new one
+      filename = #files .. ".json"
+      Utils.debug("Creating new filename: " .. filename)
+    end
   end
+  
   return filename
 end
 
@@ -134,14 +162,33 @@ end
 function History.load(bufnr, filename)
   local history_filepath = filename and History.get_filepath(bufnr, filename)
     or History.get_latest_filepath(bufnr, false)
+  
+  -- Debug output to help diagnose issues
+  Utils.debug("Loading history from: " .. tostring(history_filepath))
+  
   if history_filepath:exists() then
-    local content = history_filepath:read()
-    if content ~= nil then
-      local history = vim.json.decode(content)
-      history.filename = filepath_to_filename(history_filepath)
-      return history
+    local ok, content = pcall(function() return history_filepath:read() end)
+    
+    if ok and content ~= nil then
+      -- Try to decode the JSON content
+      local ok2, history = pcall(vim.json.decode, content)
+      
+      if ok2 and history then
+        history.filename = filepath_to_filename(history_filepath)
+        Utils.debug("Successfully loaded history: " .. history.filename)
+        return history
+      else
+        Utils.warn("Failed to decode history file: " .. tostring(history_filepath))
+      end
+    else
+      Utils.warn("Failed to read history file: " .. tostring(history_filepath))
     end
+  else
+    Utils.debug("History file does not exist: " .. tostring(history_filepath))
   end
+  
+  -- If we couldn't load the history, create a new one
+  Utils.debug("Creating new history")
   return History.new(bufnr)
 end
 

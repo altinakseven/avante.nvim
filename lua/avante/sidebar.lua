@@ -1215,6 +1215,22 @@ function Sidebar:on_mount(opts)
   end
 
   api.nvim_set_option_value("wrap", Config.windows.wrap, { win = self.result_container.winid })
+  
+  -- Ensure we have a valid chat history
+  if not self.chat_history then
+    Utils.debug("Loading chat history in on_mount")
+    self:reload_chat_history()
+    
+    -- If we have a valid chat history with messages, update the content
+    if self.chat_history and self.chat_history.messages and #self.chat_history.messages > 0 then
+      Utils.debug("Found existing conversation with " .. #self.chat_history.messages .. " messages")
+      
+      -- Schedule the update to ensure the UI is ready
+      vim.schedule(function()
+        self:update_content_with_history()
+      end)
+    end
+  end
 
   local current_apply_extmark_id = nil
 
@@ -1754,8 +1770,31 @@ function Sidebar.render_history_content(history)
 end
 
 function Sidebar:update_content_with_history()
+  Utils.debug("Updating content with history")
   self:reload_chat_history()
-  self:update_content("")
+  
+  -- Check if we have a valid chat history with messages
+  if self.chat_history and self.chat_history.messages and #self.chat_history.messages > 0 then
+    Utils.debug("Found " .. #self.chat_history.messages .. " messages in history")
+    
+    -- Update the content with the existing history
+    self:update_content("", {
+      focus = true,
+      scroll = true,
+      callback = function()
+        Utils.debug("Successfully rendered conversation history")
+        -- Focus the input container after loading history
+        vim.defer_fn(function()
+          if Utils.is_valid_container(self.input_container, true) then
+            api.nvim_set_current_win(self.input_container.winid)
+          end
+        end, 100)
+      end
+    })
+  else
+    Utils.debug("No messages found in history or failed to load history")
+    self:update_content("")
+  end
 end
 
 ---@return string, integer
@@ -2083,8 +2122,30 @@ function Sidebar:show_selected_files_hint()
 end
 
 function Sidebar:reload_chat_history()
-  if not self.code.bufnr or not api.nvim_buf_is_valid(self.code.bufnr) then return end
-  self.chat_history = Path.history.load(self.code.bufnr)
+  if not self.code.bufnr or not api.nvim_buf_is_valid(self.code.bufnr) then
+    Utils.debug("Invalid buffer when reloading chat history")
+    return
+  end
+  
+  Utils.debug("Reloading chat history for buffer: " .. self.code.bufnr)
+  
+  -- Use pcall to catch any errors during history loading
+  local ok, history = pcall(function()
+    return Path.history.load(self.code.bufnr)
+  end)
+  
+  if ok and history then
+    self.chat_history = history
+    Utils.debug("Successfully loaded chat history")
+    
+    -- Check if the history has messages
+    local messages = Utils.get_history_messages(self.chat_history)
+    Utils.debug("Loaded " .. #messages .. " messages from history")
+  else
+    Utils.warn("Failed to load chat history: " .. tostring(history))
+    -- Create a new history if loading failed
+    self.chat_history = Path.history.new(self.code.bufnr)
+  end
 end
 
 ---@return avante.HistoryMessage[]
@@ -2664,6 +2725,12 @@ end
 ---@param opts AskOptions
 function Sidebar:render(opts)
   self.ask_opts = opts
+  
+  -- Make sure we have a valid chat history before rendering
+  if not self.chat_history then
+    Utils.debug("Loading chat history before rendering")
+    self:reload_chat_history()
+  end
 
   local function get_position()
     return (opts and opts.win and opts.win.position) and opts.win.position or calculate_config_window_position()
@@ -2696,6 +2763,11 @@ function Sidebar:render(opts)
 
   self.result_container:on(event.BufWinEnter, function()
     xpcall(function() api.nvim_buf_set_name(self.result_container.bufnr, RESULT_BUF_NAME) end, function(_) end)
+    
+    -- Check if we're resuming a conversation (not a new chat)
+    if not opts.new_chat and self.chat_history and self.chat_history.messages and #self.chat_history.messages > 0 then
+      Utils.debug("Resuming conversation with " .. #self.chat_history.messages .. " messages")
+    end
   end)
 
   self.result_container:map("n", Config.mappings.sidebar.close, function() self:shutdown() end)
