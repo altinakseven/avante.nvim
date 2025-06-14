@@ -436,7 +436,6 @@ function M.setup(opts)
   require("avante.diff").setup()
   require("avante.providers").setup()
   require("avante.clipboard").setup()
-  require("avante.error_handler").setup()
 
   -- setup helpers
   H.autocmds()

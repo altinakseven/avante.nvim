@@ -4,7 +4,6 @@ local Path = require("plenary.path")
 local Config = require("avante.config")
 local RagService = require("avante.rag_service")
 local Helpers = require("avante.llm_tools.helpers")
-local ErrorHandler = require("avante.error_handler")
 
 local M = {}
 
@@ -1121,9 +1120,6 @@ function M.process_tool_use(tools, tool_use, on_log, on_complete, session_ctx)
     return nil, Helpers.CANCEL_TOKEN
   end
 
-  -- Wrap the entire function in error handling
-  local wrapped_function = ErrorHandler.wrap(function()
-
   local func
   if tool_use.name == "str_replace_editor" then
     func = M.str_replace_editor
@@ -1212,10 +1208,6 @@ function M.process_tool_use(tools, tool_use, on_log, on_complete, session_ctx)
   -- Result and error being nil means that the tool was executed asynchronously
   if result == nil and err == nil and on_complete then return end
   return handle_result(result, err)
-  end) -- Close the ErrorHandler.wrap function
-
-  -- Call the wrapped function with the same arguments
-  return wrapped_function(tools, tool_use, on_log, on_complete, session_ctx)
 end
 
 ---@param tool_use AvanteLLMToolUse
