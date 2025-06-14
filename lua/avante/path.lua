@@ -240,33 +240,110 @@ function Prompt.get_templates_dir(project_root)
   local cache_prompt_dir = P.cache_path:joinpath(directory)
   if not cache_prompt_dir:exists() then cache_prompt_dir:mkdir({ parents = true }) end
 
-  local scanner = Scan.scan_dir(directory:absolute(), { depth = 1, add_dirs = true })
+  -- Add safety checks for scanner
+  local scanner = {}
+  local ok, result = pcall(function()
+    return Scan.scan_dir(directory:absolute(), { depth = 1, add_dirs = true })
+  end)
+  
+  if ok and result then
+    scanner = result
+  else
+    Utils.warn("Failed to scan directory: " .. tostring(directory:absolute()))
+  end
+
   for _, entry in ipairs(scanner) do
-    local file = Path:new(entry)
-    if file:is_file() then
-      local pieces = vim.split(entry, "/")
+    -- Add safety check for entry
+    if type(entry) ~= "string" then
+      Utils.warn("Invalid entry in scanner: " .. tostring(entry))
+      goto continue
+    end
+    
+    local ok, file = pcall(function() return Path:new(entry) end)
+    if not ok or not file then
+      Utils.warn("Failed to create Path from entry: " .. entry)
+      goto continue
+    end
+    
+    local is_file = false
+    ok, is_file = pcall(function() return file:is_file() end)
+    if not ok then
+      Utils.warn("Failed to check if entry is file: " .. entry)
+      goto continue
+    end
+    
+    if is_file then
+      -- Use a safer split method
+      local pieces = {}
+      for piece in string.gmatch(entry, "[^/]+") do
+        table.insert(pieces, piece)
+      end
+      
+      if #pieces == 0 then
+        Utils.warn("No pieces found in entry: " .. entry)
+        goto continue
+      end
+      
       local piece = pieces[#pieces]
       local mode = piece:match("([^.]+)%.avanterules$")
       if not mode or not Prompt.custom_modes[mode] then goto continue end
       if Prompt.custom_prompts_contents[mode] == nil then
         Utils.info(string.format("Using %s as %s system prompt", entry, mode))
-        Prompt.custom_prompts_contents[mode] = file:read()
+        local ok, content = pcall(function() return file:read() end)
+        if ok and content then
+          Prompt.custom_prompts_contents[mode] = content
+        else
+          Utils.warn("Failed to read file: " .. entry)
+        end
       end
     end
     ::continue::
   end
 
-  Path:new(debug.getinfo(1).source:match("@?(.*/)"):gsub("/lua/avante/path.lua$", "") .. "templates")
-    :copy({ destination = cache_prompt_dir, recursive = true })
+  -- Get the plugin directory path safely
+  local plugin_dir = ""
+  local ok, source_info = pcall(function() return debug.getinfo(1).source:match("@?(.*/)")end)
+  if ok and source_info then
+    plugin_dir = source_info:gsub("/lua/avante/path.lua$", "") .. "/templates"
+  else
+    Utils.warn("Failed to get plugin directory path")
+    plugin_dir = "./templates" -- Fallback
+  end
+  
+  -- Copy templates safely
+  ok, _ = pcall(function()
+    Path:new(plugin_dir):copy({ destination = cache_prompt_dir, recursive = true })
+  end)
+  if not ok then
+    Utils.warn("Failed to copy templates from " .. plugin_dir .. " to " .. tostring(cache_prompt_dir))
+  end
 
+  -- Process custom prompts safely
   vim.iter(Prompt.custom_prompts_contents):filter(function(_, v) return v ~= nil end):each(function(k, v)
-    local orig_file = cache_prompt_dir:joinpath(Prompt.get_builtin_prompts_filepath(k))
-    local orig_content = orig_file:read()
-    local f = cache_prompt_dir:joinpath(Prompt.get_custom_prompts_filepath(k))
-    f:write(orig_content, "w")
-    f:write("{% block custom_prompt -%}\n", "a")
-    f:write(v, "a")
-    f:write("\n{%- endblock %}", "a")
+    local ok, orig_file = pcall(function() return cache_prompt_dir:joinpath(Prompt.get_builtin_prompts_filepath(k)) end)
+    if not ok or not orig_file then
+      Utils.warn("Failed to get original file path for mode: " .. k)
+      return
+    end
+    
+    local ok2, orig_content = pcall(function() return orig_file:read() end)
+    if not ok2 or not orig_content then
+      Utils.warn("Failed to read original file for mode: " .. k)
+      return
+    end
+    
+    local ok3, f = pcall(function() return cache_prompt_dir:joinpath(Prompt.get_custom_prompts_filepath(k)) end)
+    if not ok3 or not f then
+      Utils.warn("Failed to get custom file path for mode: " .. k)
+      return
+    end
+    
+    pcall(function()
+      f:write(orig_content, "w")
+      f:write("{% block custom_prompt -%}\n", "a")
+      f:write(v, "a")
+      f:write("\n{%- endblock %}", "a")
+    end)
   end)
 
   local dir = cache_prompt_dir:absolute()
@@ -291,7 +368,13 @@ function Prompt.render_mode(mode, opts)
   return _templates_lib.render(filepath, opts)
 end
 
-function Prompt.initialize(directory) _templates_lib.initialize(directory) end
+function Prompt.initialize(directory) 
+  if not directory or type(directory) ~= "string" then
+    Utils.error("Invalid directory provided to initialize: " .. tostring(directory))
+    error("Invalid directory provided to initialize", 2)
+  end
+  _templates_lib.initialize(directory) 
+end
 
 P.prompts = Prompt
 
