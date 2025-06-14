@@ -1,6 +1,7 @@
 # Lua compiled files
 *.lua~
 *.luac
+*.so
 
 .venv
 __pycache__/
